@@ -16,11 +16,11 @@ String s = "";
 int sizePre;
 int sizeAfter;
 int temp;
-// Thong tin ket noi mang wifi
+// Information wifi
 const char *ssid = "CAM_TEST2";
 const char *password = "1234567890";
 
-// Thong tin ket noi toi MQTT broker IP address
+// Information MQTT broker IP address
 const char *mqttServer = "192.168.88.173";
 const int mqttPort = 1883;
 
@@ -71,111 +71,31 @@ void loop()
   client.loop();
 }
 
-void receiverRawData()
-{
-  String s1 = "";
-  while (s1.isEmpty())
-  {
-    // sendRawData(s);
-    if (IrReceiver.decode())
-    { // Grab an IR code
-      if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_WAS_OVERFLOW)
-      {
-        Serial.println();
-      }
-      else
-      {
-        if (IrReceiver.decodedIRData.protocol == UNKNOWN || IrReceiver.decodedIRData.protocol == RC5)
-        {
-          // Serial.println(F("Nhận được tin hieu nhieu hoặc giao thức không xác định (hoặc chưa được bật)"));
-        }
-        else
-        {
-          Serial.println();
-          for (int i = 1; i <= getMyStructValue().rawlen - 1; i++)
-          {
-            s1 += String(getMyStructValue().rawbuf[i] * MICROS_PER_TICK) + ",";
-          }
-          sizeAfter = getMyStructValue().rawlen - 1;
-          // Serial.println("ADDRESS: " + String(getMyStructValue().address));
-          Serial.println("COMMAD: " + IrReceiver.decodedIRData.command);
-          Serial.printf("\n[Protocol] %s - [Address] %hu - [Command] %hu\n", ProtocolNames[IrReceiver.decodedIRData.protocol], ProtocolNames[IrReceiver.decodedIRData.address], ProtocolNames[IrReceiver.decodedIRData.command]);
-          Serial.printf("\nName of protocol: %s\n", ProtocolNames[IrReceiver.decodedIRData.protocol]);
 
-          // Serial.println("RAW DATA: " + s1);
-        }
-      }
-      removeCommasEndString(s1);
-      Serial.println("RAW DATA SAU: " + s1);
-    }
-    IrReceiver.resume();
-  }
-}
 
-void sendRawData(String &str)
-{
-  Serial.println("Phat tin hieu hong ngoai");
-  Serial.flush();
 
-  std::vector<uint16_t> myArray = stringToUint16Array(str);
 
-  const uint16_t *rawData = myArray.data();
-  int size = myArray.size();
-  sizePre = size;
-
-  // printData(rawData, size);
-
-  // Lưu ý cách tiếp cận được sử dụng để tự động tính toán kích thước của mảng.
-  // do
-  // {
-  //   // send raw data taked from server
-  //   IrSender.sendRaw(rawData, size, NEC_KHZ);
-  //   if (IrReceiver.decode())
-  //   {
-  //     /** Check overflow */
-  //     if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_WAS_OVERFLOW)
-  //     {
-  //       Serial.println("Overflow");
-  //     }
-  //     /**  */
-  //     else
-  //     {
-  //       sStoredIRData.receivedIRData = IrReceiver.decodedIRData;
-  //       IrReceiver.printIRResultShort(&Serial);
-  //       IrReceiver.compensateAndPrintIRResultAsCArray(&Serial, true); // Output the results as uint16_t source code array of micros
-  //     }
-  //   }
-  //   IrReceiver.resume();
-  // } while (sStoredIRData.receivedIRData.rawDataPtr->rawlen - 1 != sizeAfter);
-}
 
 void sendAndReceiverData(String &str)
 {
   String s1 = "";
   String command;
 
-  // while(s1.isEmpty())
-  // {
-  // Serial.println("Phat tin hieu hong ngoai");
-  // Serial.flush();
+ 
 
   std::vector<uint16_t> myArray = stringToUint16Array(str);
 
   const uint16_t *rawData = myArray.data();
   int size = myArray.size();
 
-  // printData(rawData, size);
 
   IrSender.sendRaw(rawData, size, NEC_KHZ);
   sizePre = size;
-  // sStoredIRData.receivedIRData = IrReceiver.decodedIRData;
-  // Serial.println(sStoredIRData.rawCode);
 
-  // Serial.println(.rawcode);
 
   delay(1000);
   if (IrReceiver.decode())
-  { // Lấy mã IR
+  { // Decode IR
     if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_WAS_OVERFLOW)
     {
       Serial.println();
@@ -184,7 +104,7 @@ void sendAndReceiverData(String &str)
     {
       if (IrReceiver.decodedIRData.protocol == UNKNOWN || IrReceiver.decodedIRData.protocol == RC5)
       {
-        // Serial.println(F("Nhận được tin hieu nhieu hoặc giao thức không xác định (hoặc chưa được bật)"));
+        Serial.println(F("Overflow!"));
       }
       else
       {
@@ -194,12 +114,10 @@ void sendAndReceiverData(String &str)
           s1 += String(getMyStructValue().rawbuf[i] * MICROS_PER_TICK) + ",";
         }
         sizeAfter = int(getMyStructValue().rawlen - 1);
-        // Serial.println("ADDRESS: " + String(getMyStructValue().address));
         Serial.println("COMMAD: " + IrReceiver.decodedIRData.command);
         Serial.printf("\n[Protocol] %s - [Address] %hu - [Command] %hu\n", ProtocolNames[IrReceiver.decodedIRData.protocol], ProtocolNames[IrReceiver.decodedIRData.address], ProtocolNames[IrReceiver.decodedIRData.command]);
         Serial.printf("\nName of protocol: %s\n", ProtocolNames[IrReceiver.decodedIRData.protocol]);
         command = getMyStructValue().value;
-        // Serial.println("RAW DATA: " + s1);
         int status;
 
         if (sizeAfter != 0 || sizePre != 0)
@@ -211,11 +129,11 @@ void sendAndReceiverData(String &str)
             doc["command"] = command;
             doc["status"] = status;
 
-            // Chuyển JSON object sang chuỗi JSON
+            //  JSON object -> string JSON
             char jsonBuffer[512];
             serializeJson(doc, jsonBuffer);
 
-            // Gửi chuỗi JSON lên MQTT
+            // send JSON to MQTT
             client.publish(topicRepToSever, jsonBuffer);
           }
           else
@@ -225,20 +143,16 @@ void sendAndReceiverData(String &str)
             doc["command"] = command;
             doc["status"] = status;
 
-            // Chuyển JSON object sang chuỗi JSON
+            //  JSON object -> string JSON
             char jsonBuffer[512];
             serializeJson(doc, jsonBuffer);
-
-            // Gửi chuỗi JSON lên MQTT
+            // send JSON to MQTT
             client.publish(topicRepToSever, jsonBuffer);
           }
           client.publish(topicPub, "OK");
         }
       }
     }
-    // removeCommasEndString(s1);
-    // Serial.println("RAW DATA SAU: " + s1);
-    // Serial.println(IrReceiver.read());
   }
   temp = sizeAfter * sizePre;
   IrReceiver.resume();
@@ -284,7 +198,7 @@ std::vector<uint16_t> stringToUint16Array(String &str)
   return arr;
 }
 
-/*Cac ham xu ly Data*/
+/*FUNCTION Data*/
 
 // struct tao value ir
 struct decode_results getMyStructValue()
@@ -310,9 +224,9 @@ void printData(const uint16_t *data, int size)
   std::cout << std::endl;
 }
 
-/*Cac ham xu ly MQTT*/
+/*FUNCTION MQTT*/
 
-// Ket noi toi wwifi
+// Connect Wifi
 void conectWifi()
 {
   WiFi.begin(ssid, password);
@@ -347,7 +261,7 @@ void callback(char *topic, byte *payload, unsigned int length)
   sizePre = 0;
 }
 
-// Ket noi den MQTT
+// Connect to MQTT
 void connectToMqttBroker()
 {
 
