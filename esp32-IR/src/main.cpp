@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <map>
 
 #define DISABLE_CODE_FOR_RECEIVER // Disables restarting receiver after each send. Saves 450 bytes program memory and 269 bytes RAM if receiving functions are not used.
 
@@ -27,9 +28,9 @@ const int mqttPort = 1883;
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-const char *topicSub = "testPubData";            // MQTT topic sub
-const char *topicPub = "testSubRequest";         // MQTT topic pub
-const char *topicRepToSever = "testRepToServer"; // MQTT topic pub
+const char *topicSub = "data";            // MQTT topic sub
+const char *topicPub = "request";         // MQTT topic pub
+const char *topicRepToSever = "status"; // MQTT topic pub
 
 #include "PinDefinitionsAndMore.h" // Define macros for input and output pin etc.
 
@@ -37,6 +38,7 @@ struct decode_results getMyStructValue();
 // void printData(const uint16_t *data, int size);
 
 void removeCommasEndString(String &string);
+std::vector<uint16_t> decode(const std::string& source);
 std::vector<uint16_t> stringToUint16Array(String &str);
 void sendRawData(String &str);
 void receiverRawData();
@@ -70,41 +72,35 @@ void loop()
   }
   client.loop();
 }
-
-
-
-
-
-
 void sendAndReceiverData(String &str)
 {
   String s1 = "";
   String command;
+  // std::vector<uint16_t> data = decode(std::string(s.c_str()));
+  // String arduinoString = "Your Arduino String";
+  std::string stdString = std::string(str.c_str());
 
- 
-
-  std::vector<uint16_t> myArray = stringToUint16Array(str);
+  std::vector<uint16_t> myArray = decode(stdString);
 
   const uint16_t *rawData = myArray.data();
   int size = myArray.size();
 
-
   IrSender.sendRaw(rawData, size, NEC_KHZ);
   sizePre = size;
 
-
-  delay(1000);
+  delay(500);
   if (IrReceiver.decode())
   { // Decode IR
     if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_WAS_OVERFLOW)
     {
       Serial.println();
+      Serial.println("Overflow!");
     }
     else
     {
       if (IrReceiver.decodedIRData.protocol == UNKNOWN || IrReceiver.decodedIRData.protocol == RC5)
       {
-        Serial.println(F("Overflow!"));
+        Serial.println(F("UNKNOWN OR RC5!"));
       }
       else
       {
@@ -117,7 +113,8 @@ void sendAndReceiverData(String &str)
         Serial.println("COMMAD: " + IrReceiver.decodedIRData.command);
         Serial.printf("\n[Protocol] %s - [Address] %hu - [Command] %hu\n", ProtocolNames[IrReceiver.decodedIRData.protocol], ProtocolNames[IrReceiver.decodedIRData.address], ProtocolNames[IrReceiver.decodedIRData.command]);
         Serial.printf("\nName of protocol: %s\n", ProtocolNames[IrReceiver.decodedIRData.protocol]);
-        command = getMyStructValue().value;
+        // command = getMyStructValue().value;
+        command = IrReceiver.decodedIRData.command;
         int status;
 
         if (sizeAfter != 0 || sizePre != 0)
@@ -126,7 +123,7 @@ void sendAndReceiverData(String &str)
           {
             status = 1;
             StaticJsonDocument<200> doc;
-            doc["command"] = command;
+            doc["command"] = '0x' + String(command);
             doc["status"] = status;
 
             //  JSON object -> string JSON
@@ -140,7 +137,7 @@ void sendAndReceiverData(String &str)
           {
             status = 0;
             StaticJsonDocument<200> doc;
-            doc["command"] = command;
+            doc["command"] = '0x' + String(command);
             doc["status"] = status;
 
             //  JSON object -> string JSON
@@ -211,7 +208,6 @@ struct decode_results getMyStructValue()
   myStruct.address = IrReceiver.decodedIRData.address;
   myStruct.value = IrReceiver.decodedIRData.command;
   // myStruct.name = IrReceiver.decodedIRData.protocol;
-
   // Trả về giá trị của struct
   return myStruct;
 }
@@ -250,10 +246,14 @@ void callback(char *topic, byte *payload, unsigned int length)
   }
   // Serial.println(dataReceived);
   Serial.println("NHAN++++++++");
+  
   s = dataReceived;
-
+  // std::string dataStringToStdString = std::string(s.c_str());
   do
   {
+    // std::vector<uint16_t> decode(const std::string& source);
+    
+
     sendAndReceiverData(s);
   } while (temp == 0);
   s = "";
@@ -288,7 +288,152 @@ void reconnect()
     else
     {
       Serial.println("Failed to connect to MQTT broker, retrying...");
-      delay(5000);
+      delay(2000);
     }
   }
+}
+
+/* giảiMã Tasmota raw data to array uint16_t raw data to send */
+std::vector<uint16_t> decode(const std::string& source)
+{
+    Serial.printf("\nSource: %s", source.c_str());
+
+    std::map<char, uint16_t> map_pair;
+    std::vector<uint16_t> raw;
+
+    int16_t prev = 0;
+    int16_t currentPos = 0;
+    int16_t prev_2 = 0;
+    int16_t currentPos_2 = 0;
+    // Serial.printf("Source: %s", source);
+
+    char startU = 'A';
+    char startL = 'a';
+
+    // Declare delimiters
+    const std::string delimeters = "+-";
+    const std::string tastomaCode = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM";
+
+    // main loop to push sub std::string between two delimiter to <vector> result
+    while ((currentPos = source.find_first_of(delimeters, prev)) != std::string::npos) {
+        if (currentPos > prev) {
+            std::string temp = source.substr(prev, currentPos - prev);
+
+            /* Handle temp std::string, parse tastoma code */
+            prev_2 = 0;
+            currentPos_2 = 0;
+            while ((currentPos_2 = temp.find_first_of(tastomaCode, prev_2)) != std::string::npos) {
+                // if currentPos_2 != prev_2, to push (interger raw)
+                if (currentPos_2 - prev_2 != 0) {
+                    // if integer value --> map pair
+                    uint16_t uintRaw = (uint16_t)stoi(temp.substr(prev_2, currentPos_2 - prev_2));
+                    // Serial.printf("\n%u", uintRaw);
+                    map_pair[startU++] = uintRaw;
+                    map_pair[startL++] = uintRaw;
+                    raw.push_back(uintRaw);
+                }
+
+                // std::string --> const char* --> (char*) type cast --> *(char*) to take char value
+                raw.push_back(map_pair[*((char*)temp.substr(currentPos_2, 1).c_str())]); // push tastoma code into vector
+                prev_2 = currentPos_2 + 1;
+            }
+            if (prev_2 < temp.length()) {
+                // if integer value --> map pair
+                uint16_t uintRaw = (uint16_t)stoi(temp.substr(prev_2, currentPos_2 - prev_2));
+                map_pair[startU++] = uintRaw;
+                map_pair[startL++] = uintRaw;
+                raw.push_back(uintRaw); // push from prev_2 to currentPos to vector
+            }
+            /***********************/
+            // results.push_back(source.substr(prev, currentPos - prev));
+        }
+        // next move to next delimitter
+        prev = currentPos + 1;
+    }
+
+    // check if prev < length source --> push last substd::string (from last delimiter to the end of source) to results
+    if (prev < source.length()) {
+        std::string temp = source.substr(prev);
+
+        /* Handle temp std::string, parse tastoma code */
+        prev_2 = 0;
+        currentPos_2 = 0;
+        while ((currentPos_2 = temp.find_first_of(tastomaCode, prev_2)) != std::string::npos) {
+            // if currentPos_2 != prev_2, to push (interger raw)
+            if (currentPos_2 - prev_2 != 0) {
+                // if integer value --> map pair
+                uint16_t uintRaw = (uint16_t)stoi(temp.substr(prev_2, currentPos_2 - prev_2));
+                map_pair[startU++] = uintRaw;
+                map_pair[startL++] = uintRaw;
+                raw.push_back(uintRaw);
+            }
+
+            // std::string --> const char* --> (char*) type cast --> *(char*) to take char value
+            raw.push_back(map_pair[*((char*)temp.substr(currentPos_2, 1).c_str())]); // push tastoma code into vector
+            prev_2 = currentPos_2 + 1;
+        }
+        if (prev_2 < temp.length()) {
+            // if integer value --> map pair
+            uint16_t uintRaw = (uint16_t)stoi(temp.substr(prev_2, currentPos_2 - prev_2));
+            map_pair[startU++] = uintRaw;
+            map_pair[startL++] = uintRaw;
+            raw.push_back(uintRaw); // push from prev_2 to currentPos to vector
+        }
+        /***********************/
+    }
+
+    return raw;
+}
+
+std::string encodeRaw(uint8_t* rawData, uint8_t rawLength)
+{
+    std::map<char, uint16_t> map_pair;
+    std::map<char, uint16_t>::iterator it = map_pair.begin();
+    std::string encodedRaw = "";
+
+    bool isDup = false;
+
+    char startU = 'A';
+
+    for (uint8_t i = 0; i < rawLength; i++) {
+        // if positive (carrier)
+        if (i % 2 == 0) {
+            while (it != map_pair.end()) {
+                // compare value
+                if ((it->second - rawData[i] * MICROS_PER_TICK) == 0) {
+                    encodedRaw += it->first;
+                    isDup = true;
+                    break;
+                }
+                ++it;
+            }
+            if (!isDup) {
+                encodedRaw += "+" + std::to_string(rawData[i] * MICROS_PER_TICK);
+                map_pair[startU++] = rawData[i] * MICROS_PER_TICK;
+            }
+            // reset for new iteration
+            it = map_pair.begin();
+            isDup = false;
+        }
+        // if negative (no carrier)
+        else {
+            while (it != map_pair.end()) {
+                // compare value
+                if ((it->second - rawData[i] * MICROS_PER_TICK) == 0) {
+                    encodedRaw += (char)(it->first + 32); // convert 'A' to 'a'
+                    isDup = true;
+                    break;
+                }
+                ++it;
+            }
+            if (!isDup) {
+                encodedRaw += "-" + std::to_string(rawData[i] * MICROS_PER_TICK);
+                map_pair[startU++] = rawData[i] * MICROS_PER_TICK;
+            }
+            // reset for new iteration
+            it = map_pair.begin();
+            isDup = false;
+        }
+    }
+    return encodedRaw;
 }
