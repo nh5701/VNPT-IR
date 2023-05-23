@@ -1,7 +1,10 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include <IRremote.hpp>
+// #include <IRremote.hpp>
+#include "IRremoteESP8266.h"
+#include "IRsend.h"
+#include "IRrecv.h"
 #include "IRReceive.hpp"
 #include <ArduinoJson.h>
 #include <Wire.h>
@@ -9,14 +12,16 @@
 #include <string>
 #include <vector>
 #include <map>
+#include "PinDefinitionsAndMore.h"
 
 #define DISABLE_CODE_FOR_RECEIVER // Disables restarting receiver after each send. Saves 450 bytes program memory and 269 bytes RAM if receiving functions are not used.
+#define MICROS_PER_TICK 2
 
-// String sTest = "9050,4500,600,500,600,550,600,1650,600,550,600,500,650,500,600,550,600,500,600,1700,600,1650,600,500,650,1650,550,1700,600,1650,600,1650,650,1650,600,500,600,550,600,500,650,1650,600,550,600,500,600,550,600,550,550,1700,600,1650,550,1750,550,550,550,1750,550,1700,550,1700,550,1700,600";
 String s = "";
 int sizePre;
 int sizeAfter;
 int temp;
+
 // Information wifi
 const char *ssid = "CAM_TEST2";
 const char *password = "1234567890";
@@ -32,10 +37,9 @@ const char *topicSub = "data";            // MQTT topic sub
 const char *topicPub = "request";         // MQTT topic pub
 const char *topicRepToSever = "status"; // MQTT topic pub
 
-#include "PinDefinitionsAndMore.h" // Define macros for input and output pin etc.
-
+ // Define macros for input and output pin etc.
+decode_results results;
 struct decode_results getMyStructValue();
-// void printData(const uint16_t *data, int size);
 
 void removeCommasEndString(String &string);
 std::vector<uint16_t> decode(const std::string& source);
@@ -47,15 +51,18 @@ void sendAndReceiverData(String &str);
 void conectWifi();
 void reconnect();
 void connectToMqttBroker();
-// void callback();
-// void jsonRep(String &command, int &status);
+
+IRsend irsend(IR_SEND_PIN);
+IRrecv irrecv(IR_RECEIVE_PIN);
 
 void setup()
 {
   pinMode(LED_BUILTIN, OUTPUT);
   Serial.begin(115200);
-  IrSender.begin(IR_SEND_PIN); // Start with IR_SEND_PIN as send pin and enable feedback LED at default feedback LED pin
-  IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
+  irsend.begin();
+  irrecv.enableIRIn();
+  // IrSender.begin(IR_SEND_PIN); // Start with IR_SEND_PIN as send pin and enable feedback LED at default feedback LED pin
+  // IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
 
   conectWifi();
 
@@ -84,21 +91,23 @@ void sendAndReceiverData(String &str)
 
   const uint16_t *rawData = myArray.data();
   int size = myArray.size();
-
-  IrSender.sendRaw(rawData, size, NEC_KHZ);
+  // irsend.sendNEC((uint64_t)rawData, size, 38);
+  irsend.sendRaw(rawData,size,38);
+  // IrSender.sendRaw(rawData, size, NEC_KHZ);
   sizePre = size;
 
   delay(500);
-  if (IrReceiver.decode())
-  { // Decode IR
-    if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_WAS_OVERFLOW)
+  // if (IrReceiver.decode())
+  if(irrecv.decode(&results))
+  { 
+    // if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_WAS_OVERFLOW)
+    if(results.overflow)
     {
-      Serial.println();
-      Serial.println("Overflow!");
+      Serial.println("\nOverflow!");
     }
     else
     {
-      if (IrReceiver.decodedIRData.protocol == UNKNOWN || IrReceiver.decodedIRData.protocol == RC5)
+      if (results.decode_type == UNKNOWN || results.decode_type == RC5)
       {
         Serial.println(F("UNKNOWN OR RC5!"));
       }
@@ -110,41 +119,55 @@ void sendAndReceiverData(String &str)
           s1 += String(getMyStructValue().rawbuf[i] * MICROS_PER_TICK) + ",";
         }
         sizeAfter = int(getMyStructValue().rawlen - 1);
-        Serial.println("COMMAD: " + IrReceiver.decodedIRData.command);
-        Serial.printf("\n[Protocol] %s - [Address] %hu - [Command] %hu\n", ProtocolNames[IrReceiver.decodedIRData.protocol], ProtocolNames[IrReceiver.decodedIRData.address], ProtocolNames[IrReceiver.decodedIRData.command]);
-        Serial.printf("\nName of protocol: %s\n", ProtocolNames[IrReceiver.decodedIRData.protocol]);
+        Serial.println("COMMAD: " + results.command);
+        Serial.printf("\n[Protocol] %s - [Address] %hu - [Command] %hu\n",results.decode_type, result.address, results.command);
         // command = getMyStructValue().value;
-        command = IrReceiver.decodedIRData.command;
-        int status;
-
+        command = results.command;
+        String status;
+        String data;
         if (sizeAfter != 0 || sizePre != 0)
         {
           if (sizeAfter == sizePre)
           {
-            status = 1;
-            StaticJsonDocument<200> doc;
-            doc["command"] = '0x' + String(command);
-            doc["status"] = status;
+            data = "{\"code\":[";
+            status = "1";
+            
+            for (uint16_t i = 1; i < results.rawlen; i++) {
+                data += String(results.rawbuf[i]) + ",";
+            }
+            
+            data.substring(0, data.length() - 2); // cut comma in tail of raw string
+            data += "],";
 
-            //  JSON object -> string JSON
-            char jsonBuffer[512];
-            serializeJson(doc, jsonBuffer);
-
+            data += "\"mapping_code\":\"";
+            data += String(results.decode_type) + "_" + String(results.command) + "_" + String(results.address) + "_" + String(results.value) + "\",";
+            data += "\"status\":";
+            data += status;
+            data += "}";
+            const char * data_str = data.c_str();
             // send JSON to MQTT
-            client.publish(topicRepToSever, jsonBuffer);
+            client.publish(topicRepToSever, data_str);
           }
           else
           {
-            status = 0;
-            StaticJsonDocument<200> doc;
-            doc["command"] = '0x' + String(command);
-            doc["status"] = status;
+            data = "{\"code\":[";
+            status = "0";
+            
+            for (uint16_t i = 1; i < results.rawlen; i++) {
+                data += String(results.rawbuf[i]) + ",";
+            }
+            
+            data.substring(0, data.length() - 2); // cut comma in tail of raw string
+            data += "],";
 
-            //  JSON object -> string JSON
-            char jsonBuffer[512];
-            serializeJson(doc, jsonBuffer);
+            data += "\"mapping_code\":\"";
+            data += String(results.decode_type) + "_" + String(results.command) + "_" + String(results.address) + "_" + String(results.value) + "\",";
+            data += "\"status\":";
+            data += status;
+            data += "}";
+            const char * data_str = data.c_str();
             // send JSON to MQTT
-            client.publish(topicRepToSever, jsonBuffer);
+            client.publish(topicRepToSever, data_str);
           }
           client.publish(topicPub, "OK");
         }
@@ -185,7 +208,7 @@ std::vector<uint16_t> stringToUint16Array(String &str)
       temp.clear();
     }
   }
-  // Xử lý số cuối cùng
+  // Handle the last number
   if (!temp.empty())
   {
     uint16_t num = std::stoi(temp);
@@ -197,47 +220,67 @@ std::vector<uint16_t> stringToUint16Array(String &str)
 
 /*FUNCTION Data*/
 
-// struct tao value ir
+// Put value IR into struct
 struct decode_results getMyStructValue()
 {
-  struct decode_results myStruct; // Tạo một đối tượng struct MyStruct
+  struct decode_results dataInfo;
 
-  // Gán giá trị cho các trường của struct
-  myStruct.rawbuf = IrReceiver.decodedIRData.rawDataPtr->rawbuf;
-  myStruct.rawlen = IrReceiver.decodedIRData.rawDataPtr->rawlen;
-  myStruct.address = IrReceiver.decodedIRData.address;
-  myStruct.value = IrReceiver.decodedIRData.command;
-  // myStruct.name = IrReceiver.decodedIRData.protocol;
-  // Trả về giá trị của struct
-  return myStruct;
-}
-void printData(const uint16_t *data, int size)
-{
-  for (int i = 0; i < size; i++)
-  {
-    std::cout << data[i] << " ";
-  }
-  std::cout << std::endl;
+  // dataInfo.rawbuf = IrReceiver.decodedIRData.rawDataPtr->rawbuf;
+  dataInfo.rawbuf = results.rawbuf;
+  dataInfo.rawlen = results.rawlen;
+  dataInfo.address = results.address;
+  dataInfo.command = results.command;
+  // dataInfo.rawlen = IrReceiver.decodedIRData.rawDataPtr->rawlen;
+  // dataInfo.address = IrReceiver.decodedIRData.address;
+  // dataInfo.value = IrReceiver.decodedIRData.command;
+  // dataInfo.name = IrReceiver.decodedIRData.protocol;
+  return dataInfo;
 }
 
-/*FUNCTION MQTT*/
-
-// Connect Wifi
+/*Setting Wifi and MQTT*/
 void conectWifi()
 {
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED)
   {
-    delay(1000);
-    Serial.println("Dang ket noi voi WiFi...");
+    delay(500);
+    Serial.printf(".");
   }
-  Serial.println("Ket noi voi wifi thanh cong!");
+  Serial.println();
+  Serial.println("Connected to Wifi!");
 }
 
-// Ham callback MQTT
+void connectToMqttBroker()
+{
+  client.setServer(mqttServer, mqttPort);
+  client.setBufferSize(512); 
+  client.setCallback(callback);
+  if (!client.connected())
+  {
+    reconnect();
+  }
+}
+
+void reconnect()
+{
+  while (!client.connected())
+  {
+    if (client.connect("esp32-client"))
+    {
+      Serial.println("Connected to MQTT broker");
+      client.subscribe(topicSub);
+    }
+    else
+    {
+      Serial.println("Failed to connect to MQTT broker, retrying...");
+      delay(2000);
+    }
+  }
+}
+
 void callback(char *topic, byte *payload, unsigned int length)
 {
-  Serial.print("Message đã nhận: ");
+  Serial.print("Message received: ");
   String dataReceived = "";
   for (int i = 0; i < length; i++)
   {
@@ -261,37 +304,7 @@ void callback(char *topic, byte *payload, unsigned int length)
   sizePre = 0;
 }
 
-// Connect to MQTT
-void connectToMqttBroker()
-{
 
-  // Thiết lập thông tin về MQTT broker
-  client.setServer(mqttServer, mqttPort);
-  client.setBufferSize(512); 
-  client.setCallback(callback);
-  // Kết nối đến MQTT broker
-  if (!client.connected())
-  { // Kiểm tra kết nối
-    reconnect();
-  }
-}
-
-void reconnect()
-{
-  while (!client.connected())
-  {
-    if (client.connect("esp32-client"))
-    {
-      Serial.println("Connected to MQTT broker");
-      client.subscribe(topicSub);
-    }
-    else
-    {
-      Serial.println("Failed to connect to MQTT broker, retrying...");
-      delay(2000);
-    }
-  }
-}
 
 /* giảiMã Tasmota raw data to array uint16_t raw data to send */
 std::vector<uint16_t> decode(const std::string& source)
@@ -418,7 +431,6 @@ std::string encodeRaw(uint8_t* rawData, uint8_t rawLength)
         // if negative (no carrier)
         else {
             while (it != map_pair.end()) {
-                // compare value
                 if ((it->second - rawData[i] * MICROS_PER_TICK) == 0) {
                     encodedRaw += (char)(it->first + 32); // convert 'A' to 'a'
                     isDup = true;
