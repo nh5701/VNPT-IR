@@ -670,8 +670,7 @@ std::vector<uint16_t> stringToUint16Array(String &str)
 {
   std::vector<uint16_t> arr;
   std::string temp;
-
-  // Tách các số thành chuỗi con
+  
   for (size_t i = 0; i < str.length(); i++)
   {
     if (isdigit(str[i]))

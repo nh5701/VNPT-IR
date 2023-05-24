@@ -5,7 +5,7 @@
 #include "IRremoteESP8266.h"
 #include "IRsend.h"
 #include "IRrecv.h"
-#include "IRReceive.hpp"
+// #include "IRReceive.hpp"
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <iostream>
@@ -14,7 +14,7 @@
 #include <map>
 #include "PinDefinitionsAndMore.h"
 
-#define DISABLE_CODE_FOR_RECEIVER // Disables restarting receiver after each send. Saves 450 bytes program memory and 269 bytes RAM if receiving functions are not used.
+#define DISABLE_CODE_FOR_RECEIVER 
 #define MICROS_PER_TICK 2
 
 String s = "";
@@ -27,7 +27,8 @@ const char *ssid = "CAM_TEST2";
 const char *password = "1234567890";
 
 // Information MQTT broker IP address
-const char *mqttServer = "192.168.88.173";
+// const char *mqttServer = "192.168.88.173";  //ifconfig of Duong
+const char *mqttServer = "192.168.88.107";  //ipconfig of DucLM
 const int mqttPort = 1883;
 
 WiFiClient espClient;
@@ -41,6 +42,7 @@ const char *topicRepToSever = "status"; // MQTT topic pub
 decode_results results;
 struct decode_results getMyStructValue();
 
+void callback(char *topic, byte *payload, unsigned int length);
 void removeCommasEndString(String &string);
 std::vector<uint16_t> decode(const std::string& source);
 std::vector<uint16_t> stringToUint16Array(String &str);
@@ -48,7 +50,7 @@ void sendRawData(String &str);
 void receiverRawData();
 void sendAndReceiverData(String &str);
 
-void conectWifi();
+void connectWifi();
 void reconnect();
 void connectToMqttBroker();
 
@@ -64,8 +66,7 @@ void setup()
   // IrSender.begin(IR_SEND_PIN); // Start with IR_SEND_PIN as send pin and enable feedback LED at default feedback LED pin
   // IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
 
-  conectWifi();
-
+  connectWifi();
   connectToMqttBroker();
   client.subscribe(topicSub);
 }
@@ -120,7 +121,7 @@ void sendAndReceiverData(String &str)
         }
         sizeAfter = int(getMyStructValue().rawlen - 1);
         Serial.println("COMMAD: " + results.command);
-        Serial.printf("\n[Protocol] %s - [Address] %hu - [Command] %hu\n",results.decode_type, result.address, results.command);
+        Serial.printf("\n[Protocol] %s - [Address] %hu - [Command] %hu\n",results.decode_type, results.address, results.command);
         // command = getMyStructValue().value;
         command = results.command;
         String status;
@@ -145,7 +146,6 @@ void sendAndReceiverData(String &str)
             data += status;
             data += "}";
             const char * data_str = data.c_str();
-            // send JSON to MQTT
             client.publish(topicRepToSever, data_str);
           }
           else
@@ -166,7 +166,6 @@ void sendAndReceiverData(String &str)
             data += status;
             data += "}";
             const char * data_str = data.c_str();
-            // send JSON to MQTT
             client.publish(topicRepToSever, data_str);
           }
           client.publish(topicPub, "OK");
@@ -175,7 +174,8 @@ void sendAndReceiverData(String &str)
     }
   }
   temp = sizeAfter * sizePre;
-  IrReceiver.resume();
+  // IrReceiver.resume();
+  irrecv.resume();
   // }
 }
 
@@ -238,7 +238,7 @@ struct decode_results getMyStructValue()
 }
 
 /*Setting Wifi and MQTT*/
-void conectWifi()
+void connectWifi()
 {
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED)
@@ -254,6 +254,7 @@ void connectToMqttBroker()
 {
   client.setServer(mqttServer, mqttPort);
   client.setBufferSize(512); 
+  // client.setCallback(callback);
   client.setCallback(callback);
   if (!client.connected())
   {
