@@ -1,11 +1,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
-// #include <IRremote.hpp>
 #include "IRremoteESP8266.h"
 #include "IRsend.h"
 #include "IRrecv.h"
-// #include "IRReceive.hpp"
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <iostream>
@@ -41,7 +39,7 @@ const char *topicRepToSever = "status"; // MQTT topic pub
  // Define macros for input and output pin etc.
 decode_results results;
 struct decode_results getMyStructValue();
-
+/*Declared function*/
 void callback(char *topic, byte *payload, unsigned int length);
 void removeCommasEndString(String &string);
 std::vector<uint16_t> decode(const std::string& source);
@@ -49,10 +47,11 @@ std::vector<uint16_t> stringToUint16Array(String &str);
 void sendRawData(String &str);
 void receiverRawData();
 void sendAndReceiverData(String &str);
-
+String createJsonTemplate(String status);
 void connectWifi();
 void reconnect();
-void connectToMqttBroker();
+void connectMqtt();
+std::vector<uint16_t> decodeRawData(const char* encodedRaw);
 
 IRsend irsend(IR_SEND_PIN);
 IRrecv irrecv(IR_RECEIVE_PIN);
@@ -67,7 +66,7 @@ void setup()
   // IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
 
   connectWifi();
-  connectToMqttBroker();
+  connectMqtt();
   client.subscribe(topicSub);
 }
 
@@ -80,25 +79,66 @@ void loop()
   }
   client.loop();
 }
-void sendAndReceiverData(String &str)
+
+/*Setting Wifi and MQTT*/
+void connectWifi()
 {
-  String s1 = "";
-  String command;
-  // std::vector<uint16_t> data = decode(std::string(s.c_str()));
-  // String arduinoString = "Your Arduino String";
-  std::string stdString = std::string(str.c_str());
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.printf(".");
+  }
+  Serial.println();
+  Serial.println("Connected to Wifi!");
+}
 
-  std::vector<uint16_t> myArray = decode(stdString);
+void connectMqtt()
+{
+  client.setServer(mqttServer, mqttPort);
+  client.setBufferSize(512); 
+  // client.setCallback(callback);
+  client.setCallback(callback);
+  if (!client.connected())
+  {
+    reconnect();
+  }
+}
 
-  const uint16_t *rawData = myArray.data();
-  int size = myArray.size();
-  // irsend.sendNEC((uint64_t)rawData, size, 38);
+void reconnect()
+{
+  while (!client.connected())
+  {
+    if (client.connect("esp32-client"))
+    {
+      Serial.println("Connected to MQTT broker");
+      client.subscribe(topicSub);
+    }
+    else
+    {
+      Serial.println("Failed to connect to MQTT broker, retrying...");
+      delay(2000);
+    }
+  }
+}
+
+void sendAndReceiverData(String &str){
+  String data;
+  // std::string stdString = std::string(str.c_str());
+  const char * data_to_decode = str.c_str();
+  std::vector<uint16_t> rawDataIsDecoded = decodeRawData(data_to_decode);
+
+  const uint16_t *rawData = rawDataIsDecoded.data();
+  int size = rawDataIsDecoded.size();
   irsend.sendRaw(rawData,size,38);
-  // IrSender.sendRaw(rawData, size, NEC_KHZ);
   sizePre = size;
 
   delay(500);
-  // if (IrReceiver.decode())
+
+  while (results.rawlen != size){
+    irrecv.decode(&results); 
+  }
+
   if(irrecv.decode(&results))
   { 
     // if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_WAS_OVERFLOW)
@@ -106,77 +146,23 @@ void sendAndReceiverData(String &str)
     {
       Serial.println("\nOverflow!");
     }
-    else
-    {
-      if (results.decode_type == UNKNOWN || results.decode_type == RC5)
-      {
-        Serial.println(F("UNKNOWN OR RC5!"));
+    else {
+      if (results.decode_type == UNKNOWN || results.decode_type == RC5){
+        data = createJsonTemplate("0");
+        const char * data_str = data.c_str();
+        client.publish(topicRepToSever, data_str);
       }
-      else
-      {
-        Serial.println();
-        for (int i = 1; i <= getMyStructValue().rawlen - 1; i++)
-        {
-          s1 += String(getMyStructValue().rawbuf[i] * MICROS_PER_TICK) + ",";
-        }
-        sizeAfter = int(getMyStructValue().rawlen - 1);
-        Serial.println("COMMAD: " + results.command);
-        Serial.printf("\n[Protocol] %s - [Address] %hu - [Command] %hu\n",results.decode_type, results.address, results.command);
-        // command = getMyStructValue().value;
-        command = results.command;
-        String status;
-        String data;
-        if (sizeAfter != 0 || sizePre != 0)
-        {
-          if (sizeAfter == sizePre)
-          {
-            data = "{\"code\":[";
-            status = "1";
-            
-            for (uint16_t i = 1; i < results.rawlen; i++) {
-                data += String(results.rawbuf[i]) + ",";
-            }
-            
-            data.substring(0, data.length() - 2); // cut comma in tail of raw string
-            data += "],";
-
-            data += "\"mapping_code\":\"";
-            data += String(results.decode_type) + "_" + String(results.command) + "_" + String(results.address) + "_" + String(results.value) + "\",";
-            data += "\"status\":";
-            data += status;
-            data += "}";
-            const char * data_str = data.c_str();
-            client.publish(topicRepToSever, data_str);
-          }
-          else
-          {
-            data = "{\"code\":[";
-            status = "0";
-            
-            for (uint16_t i = 1; i < results.rawlen; i++) {
-                data += String(results.rawbuf[i]) + ",";
-            }
-            
-            data.substring(0, data.length() - 2); // cut comma in tail of raw string
-            data += "],";
-
-            data += "\"mapping_code\":\"";
-            data += String(results.decode_type) + "_" + String(results.command) + "_" + String(results.address) + "_" + String(results.value) + "\",";
-            data += "\"status\":";
-            data += status;
-            data += "}";
-            const char * data_str = data.c_str();
-            client.publish(topicRepToSever, data_str);
-          }
-          client.publish(topicPub, "OK");
-        }
+      else {
+        data = createJsonTemplate("1");
+        const char * data_str = data.c_str();
+        client.publish(topicRepToSever, data_str);
       }
     }
+
+    temp = sizeAfter * sizePre;
+    // IrReceiver.resume();
+    irrecv.resume();
   }
-  temp = sizeAfter * sizePre;
-  // IrReceiver.resume();
-  irrecv.resume();
-  // }
 }
 
 void removeCommasEndString(String &string)
@@ -194,7 +180,6 @@ std::vector<uint16_t> stringToUint16Array(String &str)
   std::vector<uint16_t> arr;
   std::string temp;
 
-  // Tách các số thành chuỗi con
   for (size_t i = 0; i < str.length(); i++)
   {
     if (isdigit(str[i]))
@@ -237,47 +222,6 @@ struct decode_results getMyStructValue()
   return dataInfo;
 }
 
-/*Setting Wifi and MQTT*/
-void connectWifi()
-{
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.printf(".");
-  }
-  Serial.println();
-  Serial.println("Connected to Wifi!");
-}
-
-void connectToMqttBroker()
-{
-  client.setServer(mqttServer, mqttPort);
-  client.setBufferSize(512); 
-  // client.setCallback(callback);
-  client.setCallback(callback);
-  if (!client.connected())
-  {
-    reconnect();
-  }
-}
-
-void reconnect()
-{
-  while (!client.connected())
-  {
-    if (client.connect("esp32-client"))
-    {
-      Serial.println("Connected to MQTT broker");
-      client.subscribe(topicSub);
-    }
-    else
-    {
-      Serial.println("Failed to connect to MQTT broker, retrying...");
-      delay(2000);
-    }
-  }
-}
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
@@ -296,8 +240,6 @@ void callback(char *topic, byte *payload, unsigned int length)
   do
   {
     // std::vector<uint16_t> decode(const std::string& source);
-    
-
     sendAndReceiverData(s);
   } while (temp == 0);
   s = "";
@@ -305,101 +247,47 @@ void callback(char *topic, byte *payload, unsigned int length)
   sizePre = 0;
 }
 
-
-
-/* giảiMã Tasmota raw data to array uint16_t raw data to send */
-std::vector<uint16_t> decode(const std::string& source)
+std::vector<uint16_t> decodeRawData(const char* encodedRaw)
 {
-    Serial.printf("\nSource: %s", source.c_str());
+    std::vector<uint16_t> rawDataArray;
+    std::vector<uint16_t> mappingRaw;
 
-    std::map<char, uint16_t> map_pair;
-    std::vector<uint16_t> raw;
+    String numberString = "";
+    uint16_t alphabetCOunt = 0;
 
-    int16_t prev = 0;
-    int16_t currentPos = 0;
-    int16_t prev_2 = 0;
-    int16_t currentPos_2 = 0;
-    // Serial.printf("Source: %s", source);
-
-    char startU = 'A';
-    char startL = 'a';
-
-    // Declare delimiters
-    const std::string delimeters = "+-";
-    const std::string tastomaCode = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM";
-
-    // main loop to push sub std::string between two delimiter to <vector> result
-    while ((currentPos = source.find_first_of(delimeters, prev)) != std::string::npos) {
-        if (currentPos > prev) {
-            std::string temp = source.substr(prev, currentPos - prev);
-
-            /* Handle temp std::string, parse tastoma code */
-            prev_2 = 0;
-            currentPos_2 = 0;
-            while ((currentPos_2 = temp.find_first_of(tastomaCode, prev_2)) != std::string::npos) {
-                // if currentPos_2 != prev_2, to push (interger raw)
-                if (currentPos_2 - prev_2 != 0) {
-                    // if integer value --> map pair
-                    uint16_t uintRaw = (uint16_t)stoi(temp.substr(prev_2, currentPos_2 - prev_2));
-                    // Serial.printf("\n%u", uintRaw);
-                    map_pair[startU++] = uintRaw;
-                    map_pair[startL++] = uintRaw;
-                    raw.push_back(uintRaw);
-                }
-
-                // std::string --> const char* --> (char*) type cast --> *(char*) to take char value
-                raw.push_back(map_pair[*((char*)temp.substr(currentPos_2, 1).c_str())]); // push tastoma code into vector
-                prev_2 = currentPos_2 + 1;
+    for (int16_t i = 0; i < strlen(encodedRaw); i++) {
+        if (encodedRaw[i] == '+' || encodedRaw[i] == '-') {
+            // if character + or -
+            if (numberString.length()) {
+                uint16_t value = numberString.toInt();
+                mappingRaw.push_back(value);
+                rawDataArray.push_back(value);
             }
-            if (prev_2 < temp.length()) {
-                // if integer value --> map pair
-                uint16_t uintRaw = (uint16_t)stoi(temp.substr(prev_2, currentPos_2 - prev_2));
-                map_pair[startU++] = uintRaw;
-                map_pair[startL++] = uintRaw;
-                raw.push_back(uintRaw); // push from prev_2 to currentPos to vector
+            numberString = "";
+        } else if ((uint8_t)encodedRaw[i] >= 48 && (uint8_t)encodedRaw[i] <= 57) {
+            // if number
+            numberString += encodedRaw[i];
+        } else {
+            // if alphabet
+            if (numberString.length()) {
+                mappingRaw.push_back(numberString.toInt());
+                rawDataArray.push_back(numberString.toInt());
             }
-            /***********************/
-            // results.push_back(source.substr(prev, currentPos - prev));
+            // if lowercase
+            if ((uint8_t)encodedRaw[i] >= 97 && (uint8_t)encodedRaw[i] <= 122) {
+                rawDataArray.push_back(mappingRaw[(uint8_t)encodedRaw[i] - 97]);
+            } else {
+                // else upper case
+                rawDataArray.push_back(mappingRaw[(uint8_t)encodedRaw[i] - 65]);
+            }
+            numberString = "";
         }
-        // next move to next delimitter
-        prev = currentPos + 1;
     }
 
-    // check if prev < length source --> push last substd::string (from last delimiter to the end of source) to results
-    if (prev < source.length()) {
-        std::string temp = source.substr(prev);
-
-        /* Handle temp std::string, parse tastoma code */
-        prev_2 = 0;
-        currentPos_2 = 0;
-        while ((currentPos_2 = temp.find_first_of(tastomaCode, prev_2)) != std::string::npos) {
-            // if currentPos_2 != prev_2, to push (interger raw)
-            if (currentPos_2 - prev_2 != 0) {
-                // if integer value --> map pair
-                uint16_t uintRaw = (uint16_t)stoi(temp.substr(prev_2, currentPos_2 - prev_2));
-                map_pair[startU++] = uintRaw;
-                map_pair[startL++] = uintRaw;
-                raw.push_back(uintRaw);
-            }
-
-            // std::string --> const char* --> (char*) type cast --> *(char*) to take char value
-            raw.push_back(map_pair[*((char*)temp.substr(currentPos_2, 1).c_str())]); // push tastoma code into vector
-            prev_2 = currentPos_2 + 1;
-        }
-        if (prev_2 < temp.length()) {
-            // if integer value --> map pair
-            uint16_t uintRaw = (uint16_t)stoi(temp.substr(prev_2, currentPos_2 - prev_2));
-            map_pair[startU++] = uintRaw;
-            map_pair[startL++] = uintRaw;
-            raw.push_back(uintRaw); // push from prev_2 to currentPos to vector
-        }
-        /***********************/
-    }
-
-    return raw;
+    return rawDataArray;
 }
 
-std::string encodeRaw(uint8_t* rawData, uint8_t rawLength)
+std::string encodeRawData(uint8_t* rawData, uint8_t rawLength)
 {
     std::map<char, uint16_t> map_pair;
     std::map<char, uint16_t>::iterator it = map_pair.begin();
@@ -449,4 +337,23 @@ std::string encodeRaw(uint8_t* rawData, uint8_t rawLength)
         }
     }
     return encodedRaw;
+}
+
+String createJsonTemplate(String status){
+  String data = "{\"code\":[";
+            
+  for (uint16_t i = 1; i < results.rawlen; i++) {
+      data += String(results.rawbuf[i]) + ",";
+  }
+  
+  data.substring(0, data.length() - 2); // cut comma in tail of raw string
+  data += "],";
+
+  data += "\"mapping_code\":\"";
+  data += String(results.decode_type) + "_" + String(results.command) + "_" + String(results.address) + "_" + String(results.value) + "\",";
+  data += "\"status\":";
+  data += status;
+  data += "}";
+
+  return data;
 }
